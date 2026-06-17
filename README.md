@@ -14,6 +14,10 @@ pandoc -s --toc --lua-filter floating-sidebar-toc.lua -o output.html input.md
 
 (Works also with YAML metadata that specifies custom "maxwidth".)
 
+## Screenshot
+
+![screenshot](screenshot.png)
+
 ## Licensing
 
 SPDX-License-Identifier: 0BSD
