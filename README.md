@@ -14,6 +14,16 @@ pandoc -s --toc --lua-filter floating-sidebar-toc.lua -o output.html input.md
 
 (Works also with YAML metadata that specifies custom "maxwidth".)
 
+As a side note, if you have Mermaid diagrams or similar embedded in your
+markdown files, you can also have them rendered in a self-contained way to your
+HTML output. First, make sure you have `mermaid-cli` installed (from NPM or
+similar), and `pandoc-filter-diagram` package installed (from apt or similar
+distro package manager). Then call Pandoc with:
+
+```
+pandoc -s --embed-resources --toc --lua-filter /usr/share/pandoc/filter/diagram/diagram.lua --lua-filter floating-sidebar-toc.lua -o output.html input.md
+```
+
 ## Screenshot
 
 ![screenshot](screenshot.png)
