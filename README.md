@@ -14,6 +14,10 @@ pandoc -s --toc --lua-filter floating-sidebar-toc.lua -o output.html input.md
 
 (Works also with YAML metadata that specifies custom "maxwidth".)
 
+The sidebar can be shown or hidden with the ☰ button. Drag its right edge to
+resize it (the width is remembered when the browser allows `localStorage`),
+or double-click the edge to reset it to the default width.
+
 As a side note, if you have Mermaid diagrams or similar embedded in your
 markdown files, you can also have them rendered in a self-contained way to your
 HTML output. First, make sure you have `mermaid-cli` installed (from NPM or
@@ -32,8 +36,7 @@ pandoc -s --embed-resources --toc --lua-filter /usr/share/pandoc/filter/diagram/
 
 SPDX-License-Identifier: 0BSD
 
-Copyright (C) 2026 by oko256
-(https://github.com/oko256/pandoc-floating-sidebar-toc)
+Copyright (C) 2026 Olli Kokko <https://github.com/oko256/pandoc-floating-sidebar-toc>
 
 Permission to use, copy, modify, and/or distribute this software for any
 purpose with or without fee is hereby granted.

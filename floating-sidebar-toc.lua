@@ -14,8 +14,7 @@ pandoc -s --toc --lua-filter floating-sidebar-toc.lua -o output.html input.md
 
 SPDX-License-Identifier: 0BSD
 
-Copyright (C) 2026 by oko256
-(https://github.com/oko256/pandoc-floating-sidebar-toc)
+Copyright (C) 2026 Olli Kokko <https://github.com/oko256/pandoc-floating-sidebar-toc>
 
 Permission to use, copy, modify, and/or distribute this software for any
 purpose with or without fee is hereby granted.
@@ -31,11 +30,13 @@ PERFORMANCE OF THIS SOFTWARE.
 
 local css = [[
 <style>
-/* sidebar width can be customized with these variables:
-   --sst-w      : width of sidebar in narrow mode
-   --sst-wide-w : width of sidebar in wide mode
+/* default (initial) sidebar width can be customized with this variable:
+   --sst-w : width of sidebar
+   The user can drag the sidebar's right edge to resize it; the chosen width
+   is remembered (when the browser allows localStorage). Double-click the edge
+   to reset back to the default width.
 */
-:root { --sst-w: 18rem; --sst-wide-w: min(42rem, 92vw); }
+:root { --sst-w: 18rem; }
 
 html { box-sizing: border-box; transition: padding-left 0.18s ease; }
 html.sst-open { padding-left: var(--sst-w); }
@@ -55,7 +56,7 @@ html.sst-open { padding-left: var(--sst-w); }
   font-size: 0.85rem;
   line-height: 1.35;
   z-index: 1000;
-  transition: width 0.18s ease, transform 0.18s ease, background 0.18s ease;
+  transition: width 0.18s ease, transform 0.18s ease;
 }
 
 /* collapsed TOC off-screen */
@@ -74,23 +75,38 @@ html:not(.sst-open) #TOC { transform: translateX(-100%); }
 }
 #TOC a:hover { background: rgba(0, 0, 0, 0.07); }
 
-/* narrow TOC: long headings get clipped */
+/* long headings get clipped (full text is shown as a tooltip) */
 #TOC a {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* wide TOC: over the body content */
-html.sst-open.sst-wide #TOC {
-  width: var(--sst-wide-w);
-  background: rgba(245, 245, 245, 0.94);
-  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.18);
+/* drag handle on the right edge of the sidebar */
+#sst-resizer {
+  position: fixed;
+  top: 0;
+  left: var(--sst-w);
+  width: 6px;
+  height: 100vh;
+  margin-left: -3px;
+  cursor: col-resize;
+  z-index: 1001;
+  touch-action: none;
+  background: transparent;
+  transition: background 0.15s ease, left 0.18s ease;
 }
-html.sst-open.sst-wide #TOC a {
-  white-space: normal;
-  overflow: visible;
-}
+#sst-resizer:hover,
+#sst-resizer:focus-visible,
+html.sst-resizing #sst-resizer { background: rgba(0, 0, 0, 0.15); }
+#sst-resizer:focus-visible { outline: none; }
+html:not(.sst-open) #sst-resizer { display: none; }
+
+/* while dragging: follow the pointer immediately, don't select text */
+html.sst-resizing,
+html.sst-resizing #TOC,
+html.sst-resizing #sst-resizer { transition: none; }
+html.sst-resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; }
 
 .sst-header {
   display: flex;
@@ -121,7 +137,7 @@ html.sst-open.sst-wide #TOC a {
 }
 .sst-btn:hover { background: #eaeaea; }
 
-#sst-collapse, #sst-widen { flex: 0 0 auto; font-size: 1rem; }
+#sst-collapse { flex: 0 0 auto; font-size: 1rem; }
 
 #sst-menu {
   position: fixed;
@@ -133,7 +149,7 @@ html.sst-open.sst-wide #TOC a {
 }
 html.sst-open #sst-menu { display: none; }
 
-/* on small screen: overlay the content with narrow TOC as well */
+/* on small screen: overlay the content with the TOC */
 @media (max-width: 40rem) {
   html.sst-open { padding-left: 0; }
   #TOC { box-shadow: 4px 0 16px rgba(0, 0, 0, 0.18); }
@@ -145,7 +161,7 @@ html.sst-open #sst-menu { display: none; }
          border: 0; background: transparent; padding: 0; transform: none; }
   #TOC a { white-space: normal; }
   html.sst-open { padding-left: 0; }
-  #sst-menu, #sst-widen { display: none; }
+  #sst-menu, #sst-resizer { display: none; }
 }
 </style>
 ]]
@@ -153,6 +169,10 @@ html.sst-open #sst-menu { display: none; }
 local js = [[
 <script>
 (function () {
+  var STORAGE_KEY = 'sst-width';
+  var MIN_W = 160;          // px
+  var MIN_CONTENT_W = 200;  // px of content that always stays visible
+
   function init() {
     var toc = document.getElementById('TOC');
     if (!toc) return; // no TOC: do nothing
@@ -183,21 +203,128 @@ local js = [[
     title.className = 'sst-title';
     title.textContent = toc.getAttribute('aria-label') || 'Contents';
 
-    var widen = document.createElement('button');
-    widen.id = 'sst-widen';
-    widen.className = 'sst-btn';
-    widen.type = 'button';
     header.appendChild(collapse);
     header.appendChild(title);
-    header.appendChild(widen);
     toc.insertBefore(header, toc.firstChild);
 
-    function syncWiden() {
-      var wide = root.classList.contains('sst-wide');
-      widen.innerHTML = wide ? '◀' : '▶';
-      widen.setAttribute('aria-label', wide ? 'Narrow sidebar' : 'Widen sidebar');
-      widen.setAttribute('aria-pressed', wide ? 'true' : 'false');
+    // Show the full heading text on hover, since long ones get clipped.
+    var links = toc.querySelectorAll('a');
+    for (var i = 0; i < links.length; i++) {
+      if (!links[i].title) links[i].title = links[i].textContent.trim();
     }
+
+    var resizer = document.createElement('div');
+    resizer.id = 'sst-resizer';
+    resizer.tabIndex = 0;
+    resizer.setAttribute('role', 'separator');
+    resizer.setAttribute('aria-orientation', 'vertical');
+    resizer.setAttribute('aria-controls', 'TOC');
+    resizer.setAttribute('aria-label', 'Resize table of contents');
+    resizer.title = 'Drag to resize, double-click to reset';
+    body.appendChild(resizer);
+
+    var defaultWidth = toc.offsetWidth; // from the --sst-w in CSS
+    var width = defaultWidth;
+    var custom = false; // has the user chosen a width?
+
+    function maxWidth() {
+      var w = window.innerWidth;
+      return Math.max(MIN_W, Math.min(w * 0.75, w - MIN_CONTENT_W));
+    }
+
+    function syncAria() {
+      resizer.setAttribute('aria-valuemin', String(MIN_W));
+      resizer.setAttribute('aria-valuemax', String(Math.round(maxWidth())));
+      resizer.setAttribute('aria-valuenow', String(Math.round(width)));
+    }
+
+    function setWidth(px) {
+      width = Math.round(Math.min(Math.max(px, MIN_W), maxWidth()));
+      custom = true;
+      root.style.setProperty('--sst-w', width + 'px');
+      syncAria();
+    }
+
+    function saveWidth() {
+      try { localStorage.setItem(STORAGE_KEY, String(width)); } catch (e) {}
+    }
+
+    function resetWidth() {
+      custom = false;
+      width = defaultWidth;
+      root.style.removeProperty('--sst-w');
+      try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+      syncAria();
+    }
+
+    // Restore previously chosen width.
+    try {
+      var saved = parseInt(localStorage.getItem(STORAGE_KEY), 10);
+      if (saved > 0) setWidth(saved);
+    } catch (e) {}
+    syncAria();
+
+    // Dragging (mouse, touch and pen via Pointer Events).
+    var dragging = false, startX = 0, startW = 0, pendingX = null, frame = 0;
+
+    function applyPending() {
+      frame = 0;
+      if (pendingX !== null) setWidth(startW + (pendingX - startX));
+    }
+
+    resizer.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      dragging = true;
+      startX = e.clientX;
+      startW = toc.offsetWidth;
+      pendingX = null;
+      resizer.setPointerCapture(e.pointerId);
+      root.classList.add('sst-resizing');
+    });
+
+    resizer.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      pendingX = e.clientX;
+      // At most one layout update per frame: long documents reflow slowly.
+      if (!frame) frame = requestAnimationFrame(applyPending);
+    });
+
+    function endDrag(e) {
+      if (!dragging) return;
+      dragging = false;
+      if (frame) { cancelAnimationFrame(frame); applyPending(); }
+      if (resizer.hasPointerCapture(e.pointerId)) {
+        resizer.releasePointerCapture(e.pointerId);
+      }
+      root.classList.remove('sst-resizing');
+      if (pendingX !== null) saveWidth();
+    }
+    resizer.addEventListener('pointerup', endDrag);
+    resizer.addEventListener('pointercancel', endDrag);
+
+    resizer.addEventListener('dblclick', resetWidth);
+
+    resizer.addEventListener('keydown', function (e) {
+      var step = e.shiftKey ? 64 : 16;
+      var w;
+      switch (e.key) {
+        case 'ArrowLeft':  w = width - step; break;
+        case 'ArrowRight': w = width + step; break;
+        case 'Home':       w = MIN_W; break;
+        case 'End':        w = maxWidth(); break;
+        default: return;
+      }
+      e.preventDefault();
+      setWidth(w);
+      saveWidth();
+    });
+
+    // Keep a user-chosen width within limits when the window shrinks.
+    window.addEventListener('resize', function () {
+      if (custom && width > maxWidth()) setWidth(width);
+      syncAria();
+    });
 
     function syncMenu() {
       var open = root.classList.contains('sst-open');
@@ -208,31 +335,15 @@ local js = [[
 
     function setOpen(open) {
       root.classList.toggle('sst-open', open);
-      if (!open) root.classList.remove('sst-wide');
       syncMenu();
-      syncWiden();
     }
 
     menu.addEventListener('click', function () { setOpen(true); });
     collapse.addEventListener('click', function () { setOpen(false); });
 
-    widen.addEventListener('click', function () {
-      root.classList.toggle('sst-wide');
-      syncWiden();
-    });
-
-    // Clicking outside the sidebar while wide collapses it back to narrow.
-    document.addEventListener('click', function (e) {
-      if (root.classList.contains('sst-wide') && !toc.contains(e.target)) {
-        root.classList.remove('sst-wide');
-        syncWiden();
-      }
-    });
-
-    // Initial state: narrow sidebar open.
+    // Initial state: sidebar open.
     root.classList.add('sst-open');
     syncMenu();
-    syncWiden();
   }
 
   if (document.readyState === 'loading') {
